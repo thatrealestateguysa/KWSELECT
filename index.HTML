@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-900">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cold Recruit Machine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <style>
+        /* Custom scrollbar for a better dark mode aesthetic */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        /* Custom class for sticky header */
+        .sticky-header { position: sticky; top: 0; z-index: 10; }
+    </style>
+</head>
+<body class="h-full flex flex-col font-sans text-gray-200">
+
+    <header class="bg-gray-800 border-b border-gray-700 p-4 flex justify-between items-center shadow-lg flex-shrink-0">
+        <div>
+            <h1 class="text-xl font-bold text-white">Cold Recruit Machine</h1>
+            <p class="text-sm text-gray-400">Recruitment Pipeline Dashboard</p>
+        </div>
+        <button id="rerun-automations-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-300 flex items-center">
+            <i class="fas fa-sync-alt mr-2"></i> Re-run Automations
+        </button>
+    </header>
+
+    <div id="stats-container" class="p-4 bg-gray-900 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 flex-shrink-0">
+        </div>
+
+    <div class="bg-gray-800 border-y border-gray-700 p-3 flex flex-col md:flex-row gap-4 items-center justify-between flex-shrink-0">
+        <div class="flex items-center gap-4 w-full md:w-auto">
+            <input type="text" id="search-input" placeholder="Search by name, agency..." class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full md:w-64">
+            <select id="status-filter" class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </select>
+        </div>
+        <div class="flex items-center gap-2 w-full md:w-auto">
+            <select id="bulk-status-select" class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 flex-grow">
+                <option value="" disabled selected>Bulk update status...</option>
+                 </select>
+            <button id="bulk-update-btn" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-300">Apply</button>
+        </div>
+    </div>
+
+    <main class="flex-grow overflow-auto">
+        <div id="table-container" class="h-full">
+             <table class="w-full text-sm text-left text-gray-300">
+                <thead class="text-xs text-gray-300 uppercase bg-gray-800 sticky-header">
+                    <tr>
+                        <th scope="col" class="p-3 w-12"><input type="checkbox" id="select-all-checkbox" class="bg-gray-700 border-gray-600 rounded"></th>
+                        <th scope="col" class="p-3">Status</th>
+                        <th scope="col" class="p-3">Name</th>
+                        <th scope="col" class="p-3">Surname</th>
+                        <th scope="col" class="p-3">Cell Number</th>
+                        <th scope="col" class="p-3">Agency</th>
+                        <th scope="col" class="p-3 w-1/4">Notes</th>
+                        <th scope="col" class="p-3">Last Contact</th>
+                        <th scope="col" class="p-3 text-center">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="data-table-body" class="divide-y divide-gray-700">
+                    </tbody>
+            </table>
+        </div>
+    </main>
+
+    <footer id="status-bar" class="bg-gray-800 border-t border-gray-700 px-4 py-2 text-xs text-gray-400 flex justify-between items-center flex-shrink-0">
+        <div id="status-message">Initializing...</div>
+        <div id="row-count"></div>
+    </footer>
+
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+
+    // --- CONFIGURATION ---
+    const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzsrWz9TPDx5mhmJ6EOkC9ztYifIStjp39yJmSjymW3ah2bVAKMFH6bqDHNvfOxT80p/exec';
+    
+    // Based on the Apps Script CONFIG object (using 0-based index)
+    const COLUMN_MAP = {
+        STATUS: 0,
+        NAME: 1,
+        SURNAME: 2,
+        CELL_NR: 3,
+        EMAIL: 4,
+        AGENCY: 5,
+        NOTES: 6,
+        LAST_CONTACT: 7,
+        WHATSAPP_LINK: 8,
+        WHATSAPP_MESSAGE: 9
+    };
+    
+    const STATUS_OPTIONS = [
+        "To Contact", "Whatsapp", "Reply", "Keen to meet", "Cultivate", 
+        "Invite to events", "Not interested", "No Whatsapp"
+    ];
+
+    const STATUS_COLORS = {
+        "Keen to meet": "bg-green-600",
+        "Not interested": "bg-red-600",
+        "Whatsapp": "bg-blue-600",
+        "Reply": "bg-yellow-600",
+        "Default": "bg-gray-600"
+    };
+
+    // --- STATE ---
+    let originalData = [];
+    let filteredData = [];
+
+    // --- DOM ELEMENTS ---
+    const tableBody = document.getElementById('data-table-body');
+    const statsContainer = document.getElementById('stats-container');
+    const statusFilter = document.getElementById('status-filter');
+    const bulkStatusSelect = document.getElementById('bulk-status-select');
+    const searchInput = document.getElementById('search-input');
+    const bulkUpdateButton = document.getElementById('bulk-update-btn');
+    const rerunAutomationsButton = document.getElementById('rerun-automations-btn');
+    const selectAllCheckbox = document.getElementById('select-all-checkbox');
+    const statusMessage = document.getElementById('status-message');
+    const rowCount = document.getElementById('row-count');
+
+    // --- INITIALIZATION ---
+    function initialize() {
+        populateStatusDropdowns();
+        addEventListeners();
+        fetchData();
+    }
+
+    function populateStatusDropdowns() {
+        statusFilter.innerHTML = '<option value="">All Statuses</option>';
+        STATUS_OPTIONS.forEach(status => {
+            statusFilter.innerHTML += `<option value="${status}">${status}</option>`;
+            bulkStatusSelect.innerHTML += `<option value="${status}">${status}</option>`;
+        });
+    }
+
+    function addEventListeners() {
+        searchInput.addEventListener('keyup', handleFiltering);
+        statusFilter.addEventListener('change', handleFiltering);
+        rerunAutomationsButton.addEventListener('click', handleRerunAutomations);
+        bulkUpdateButton.addEventListener('click', handleBulkUpdate);
+        selectAllCheckbox.addEventListener('change', (e) => {
+            document.querySelectorAll('.row-checkbox').forEach(cb => cb.checked = e.target.checked);
+        });
+    }
+
+    // --- DATA FETCHING & RENDERING ---
+    async function fetchData() {
+        showLoadingState('Fetching data from Google Sheet...');
+        try {
+            const response = await fetch(WEB_APP_URL);
+            if (!response.ok) throw new Error(`Network response was not ok: ${response.statusText}`);
+            const json = await response.json();
+            if (json.result !== 'success') throw new Error(`API Error: ${json.message}`);
+            
+            // Remove header row and store data
+            originalData = json.data.slice(1);
+            showFeedback('✅ Data loaded successfully.', 'success');
+            renderAll();
+        } catch (error) {
+            console.error('Fetch error:', error);
+            showFeedback(`Error: ${error.message}`, 'error');
+            tableBody.innerHTML = `<tr><td colspan="9" class="text-center p-8 text-red-400">${error.message}</td></tr>`;
+        }
+    }
+
+    function renderAll() {
+        applyFilters();
+        renderStats();
+        renderTable();
+        rowCount.textContent = `${filteredData.length} of ${originalData.length} rows shown`;
+    }
+
+    function applyFilters() {
+        const searchTerm = searchInput.value.toLowerCase();
+        const statusTerm = statusFilter.value;
+
+        filteredData = originalData.filter(row => {
+            const name = (row[COLUMN_MAP.NAME] || '').toLowerCase();
+            const surname = (row[COLUMN_MAP.SURNAME] || '').toLowerCase();
+            const agency = (row[COLUMN_MAP.AGENCY] || '').toLowerCase();
+            const status = row[COLUMN_MAP.STATUS] || '';
+
+            const matchesSearch = name.includes(searchTerm) || surname.includes(searchTerm) || agency.includes(searchTerm);
+            const matchesStatus = !statusTerm || status === statusTerm;
+            
+            return matchesSearch && matchesStatus;
+        });
+    }
+
+    function renderStats() {
+        statsContainer.innerHTML = '';
+        const counts = STATUS_OPTIONS.reduce((acc, status) => ({ ...acc, [status]: 0 }), {});
+        
+        originalData.forEach(row => {
+            const status = row[COLUMN_MAP.STATUS];
+            if (counts.hasOwnProperty(status)) {
+                counts[status]++;
+            }
+        });
+
+        for (const status in counts) {
+            const color = STATUS_COLORS[status] || STATUS_COLORS.Default;
+            statsContainer.innerHTML += `
+                <div class="bg-gray-800 p-3 rounded-lg shadow">
+                    <div class="text-xs text-gray-400">${status}</div>
+                    <div class="text-2xl font-bold text-white flex items-center justify-between">
+                        ${counts[status]}
+                        <span class="w-3 h-3 rounded-full ${color}"></span>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    function renderTable() {
+        tableBody.innerHTML = '';
+        if (filteredData.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="9" class="text-center p-8 text-gray-400">No matching records found.</td></tr>';
+            return;
+        }
+
+        filteredData.forEach(rowData => {
+            const originalIndex = originalData.indexOf(rowData);
+            
+            const tr = document.createElement('tr');
+            tr.className = 'bg-gray-900 hover:bg-gray-800 transition-colors duration-200';
+            tr.setAttribute('data-row-index', originalIndex);
+
+            // Sanitize data for display
+            const status = rowData[COLUMN_MAP.STATUS] || '';
+            const name = rowData[COLUMN_MAP.NAME] || '';
+            const surname = rowData[COLUMN_MAP.SURNAME] || '';
+            const cell = rowData[COLUMN_MAP.CELL_NR] || '';
+            const agency = rowData[COLUMN_MAP.AGENCY] || '';
+            const notes = rowData[COLUMN_MAP.NOTES] || '';
+            const lastContactRaw = rowData[COLUMN_MAP.LAST_CONTACT];
+            const lastContact = lastContactRaw ? new Date(lastContactRaw).toLocaleString('en-ZA') : 'N/A';
+            const whatsappLink = rowData[COLUMN_MAP.WHATSAPP_LINK] || '';
+            
+            tr.innerHTML = `
+                <td class="p-3"><input type="checkbox" class="row-checkbox bg-gray-700 border-gray-600 rounded" data-row-index="${originalIndex}"></td>
+                <td class="p-3">
+                    <select class="status-dropdown bg-gray-700 border border-gray-600 rounded-md px-2 py-1 text-white w-full" data-row-index="${originalIndex}">
+                        ${STATUS_OPTIONS.map(opt => `<option value="${opt}" ${opt === status ? 'selected' : ''}>${opt}</option>`).join('')}
+                    </select>
+                </td>
+                <td class="p-3 font-medium">${name}</td>
+                <td class="p-3">${surname}</td>
+                <td class="p-3 text-gray-400">${cell}</td>
+                <td class="p-3 text-gray-400">${agency}</td>
+                <td class="p-3">
+                    <textarea class="notes-textarea bg-gray-700 border border-gray-600 rounded-md p-2 text-white w-full h-16 resize-y" data-row-index="${originalIndex}">${notes}</textarea>
+                </td>
+                <td class="p-3 text-xs text-gray-500">${lastContact}</td>
+                <td class="p-3 text-center">
+                    ${whatsappLink ? `<a href="${whatsappLink}" target="_blank" class="text-green-400 hover:text-green-300 text-2xl"><i class="fab fa-whatsapp"></i></a>` : '<span class="text-gray-600"><i class="fab fa-whatsapp"></i></span>'}
+                </td>
+            `;
+            tableBody.appendChild(tr);
+        });
+
+        // Add event listeners to the new dynamic elements
+        document.querySelectorAll('.status-dropdown').forEach(el => el.addEventListener('change', handleSingleStatusUpdate));
+        document.querySelectorAll('.notes-textarea').forEach(el => el.addEventListener('blur', handleSingleNoteUpdate));
+    }
+
+
+    // --- ACTION HANDLERS (POST to Google Apps Script) ---
+    function handleFiltering() {
+        applyFilters();
+        renderTable();
+        rowCount.textContent = `${filteredData.length} of ${originalData.length} rows shown`;
+    }
+
+    async function handleSingleStatusUpdate(event) {
+        const rowIndex = event.target.dataset.rowIndex;
+        const newStatus = event.target.value;
+        showLoadingState('Updating status...');
+        
+        try {
+            const result = await postToGAS({
+                action: 'updateSingleStatus',
+                payload: { rowIndex, newStatus }
+            });
+            // Optimistic UI update
+            originalData[rowIndex][COLUMN_MAP.STATUS] = newStatus;
+            originalData[rowIndex][COLUMN_MAP.LAST_CONTACT] = new Date().toISOString();
+            renderAll(); // Re-render everything to keep UI consistent
+            showFeedback(`✅ ${result.message}`, 'success');
+        } catch (error) {
+            showFeedback(`Error: ${error.message}`, 'error');
+            // Revert dropdown if update fails
+            event.target.value = originalData[rowIndex][COLUMN_MAP.STATUS];
+        }
+    }
+    
+    async function handleSingleNoteUpdate(event) {
+        const rowIndex = event.target.dataset.rowIndex;
+        const newNote = event.target.value;
+        // Don't send update if note hasn't changed
+        if (newNote === (originalData[rowIndex][COLUMN_MAP.NOTES] || '')) return;
+        
+        showLoadingState('Saving note...');
+
+        try {
+            const result = await postToGAS({
+                action: 'updateSingleNote',
+                payload: { rowIndex, newNote }
+            });
+            // Optimistic UI update
+            originalData[rowIndex][COLUMN_MAP.NOTES] = newNote;
+            originalData[rowIndex][COLUMN_MAP.LAST_CONTACT] = new Date().toISOString();
+            renderAll();
+            showFeedback(`✅ ${result.message}`, 'success');
+        } catch (error) {
+            showFeedback(`Error: ${error.message}`, 'error');
+            // Revert textarea if update fails
+            event.target.value = originalData[rowIndex][COLUMN_MAP.NOTES];
+        }
+    }
+
+    async function handleBulkUpdate() {
+        const selectedCheckboxes = document.querySelectorAll('.row-checkbox:checked');
+        const rowIndices = Array.from(selectedCheckboxes).map(cb => cb.dataset.rowIndex);
+        const newStatus = bulkStatusSelect.value;
+
+        if (rowIndices.length === 0) {
+            showFeedback('No rows selected for bulk update.', 'warning');
+            return;
+        }
+        if (!newStatus) {
+            showFeedback('Please select a status to apply.', 'warning');
+            return;
+        }
+
+        showLoadingState(`Updating ${rowIndices.length} rows...`);
+        try {
+            const result = await postToGAS({
+                action: 'bulkUpdateStatus',
+                payload: { rowIndices, newStatus }
+            });
+            showFeedback(`✅ ${result.message}`, 'success');
+            await fetchData(); // Refresh all data after bulk update
+        } catch (error) {
+            showFeedback(`Error: ${error.message}`, 'error');
+        }
+    }
+
+    async function handleRerunAutomations() {
+        if (!confirm('This will regenerate WhatsApp links and messages for all rows. Are you sure?')) return;
+        showLoadingState('Re-running all automations...');
+        try {
+            const result = await postToGAS({ action: 'rerunAutomations' });
+            showFeedback(`✅ ${result.message}`, 'success');
+            await fetchData(); // Refresh all data
+        } catch (error) {
+            showFeedback(`Error: ${error.message}`, 'error');
+        }
+    }
+
+
+    // --- UTILITY FUNCTIONS ---
+    async function postToGAS(body) {
+        const response = await fetch(WEB_APP_URL, {
+            method: 'POST',
+            body: JSON.stringify(body),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' } // Required for GAS
+        });
+        if (!response.ok) throw new Error(`Network error: ${response.statusText}`);
+        const json = await response.json();
+        if (json.result !== 'success') throw new Error(`API Error: ${json.message}`);
+        return json;
+    }
+    
+    function showLoadingState(message) {
+        statusMessage.className = 'text-yellow-400';
+        statusMessage.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>${message}`;
+    }
+
+    function showFeedback(message, type = 'info') {
+        const colorClasses = {
+            success: 'text-green-400',
+            error: 'text-red-400',
+            warning: 'text-yellow-400',
+            info: 'text-gray-400'
+        };
+        statusMessage.className = colorClasses[type] || colorClasses.info;
+        statusMessage.textContent = message;
+
+        // Clear the message after a few seconds unless it's an error
+        if (type !== 'error') {
+            setTimeout(() => {
+                if(statusMessage.textContent === message) { // Only clear if it hasn't been replaced
+                    statusMessage.className = 'text-gray-400';
+                    statusMessage.textContent = 'Ready';
+                }
+            }, 4000);
+        }
+    }
+
+    // --- START THE APP ---
+    initialize();
+
+});
+</script>
+
+</body>
+</html>
